@@ -48,10 +48,43 @@ module RuboCop
 
         class_nodes = class_node.defined_module.each_node
         namespaces = class_node.each_ancestor(:class, :module).map(&:identifier)
+        table_prefix, table_suffix = mount_table_name(class_node)
+
         [*class_nodes, *namespaces]
           .reverse
           .map { |node| node.children[1] }.join('_')
           .tableize
+          .yield_self { |base_table_name| table_prefix + base_table_name + table_suffix }
+      end
+
+      # Resolves the table name with prefixes and suffixes
+      # if a prefix or suffix is found it will return the value
+      # otherwise it will return ''
+      def mount_table_name(class_node)
+        table_name_parts = []
+        class_node.each_descendant do |descendant|
+          next unless descendant.instance_of?(RuboCop::AST::SendNode)
+
+          send_node = RuboCop::NodePattern.new('(:send _ $...)').match(descendant)
+          if send_node && /table_name_(prefix|suffix)/.match(send_node[0])
+            table_name_parts << { send_node[0] => send_node[1].children&.first }
+          end
+        end
+
+        table_prefix = mount_prefix(table_name_parts)
+        table_suffix = mount_suffix(table_name_parts)
+
+        [table_prefix, table_suffix]
+      end
+
+      def mount_prefix(name_part)
+        name_part.select { |part| part[:table_name_prefix=] }
+                 .yield_self { |arr_prefix| arr_prefix.empty? ? '' : "#{arr_prefix.first[:table_name_prefix=]}_" }
+      end
+
+      def mount_suffix(name_part)
+        name_part.select { |part| part[:table_name_suffix=] }
+                 .yield_self { |arr_suffix| arr_suffix.empty? ? '' : "_#{arr_suffix.first[:table_name_suffix=]}" }
       end
 
       # Resolve relation into column name.
